@@ -1,0 +1,217 @@
+// =============================================================================
+// schema.prisma — Sistema de Moeda Estudantil
+// Lab03S02 — Modelo ER + Estratégia de Acesso via ORM (Prisma + PostgreSQL)
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// ENUM — define os tipos de perfil de usuário no sistema
+// ---------------------------------------------------------------------------
+enum TipoPerfil {
+  ALUNO
+  PROFESSOR
+  EMPRESA
+}
+
+// ---------------------------------------------------------------------------
+// ENUM — status de um resgate de vantagem
+// ---------------------------------------------------------------------------
+enum StatusResgate {
+  PENDENTE
+  ENVIADO
+  CONCLUIDO
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: Usuario
+// Tabela base de autenticação. Toda entidade (Aluno, Empresa) possui um
+// registro aqui. Estratégia de herança: tabela concreta por tipo (TPT).
+// ---------------------------------------------------------------------------
+model Usuario {
+  id_usuario  Int        @id @default(autoincrement())
+  email_login String     @unique
+  senha_hash  String
+  tipo_perfil TipoPerfil
+  ativo       Boolean    @default(true)
+  criado_em   DateTime   @default(now())
+
+  // Relações 1-para-1 opcionais (apenas um tipo existirá por usuario)
+  aluno     Aluno?
+  empresa   EmpresaParceira?
+  professor Professor?
+
+  @@map("usuarios")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: Aluno
+// Vincula-se a Usuario (1:1). Contém dados pessoais, endereço e saldo.
+// ---------------------------------------------------------------------------
+model Aluno {
+  id_aluno       Int     @id @default(autoincrement())
+  nome_completo  String
+  cpf            String  @unique
+  rg             String?
+
+  // Endereço
+  logradouro  String?
+  numero      String?
+  complemento String?
+  bairro      String?
+  cidade      String?
+  estado      String?
+  cep         String?
+
+  // Saldo em moedas estudantis
+  saldo_moedas Decimal @default(0.00) @db.Decimal(10, 2)
+
+  // Chaves estrangeiras
+  id_usuario     Int  @unique
+  id_instituicao Int?
+  id_curso       Int?
+
+  // Relação com a tabela base de usuário
+  usuario Usuario @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+
+  // Transações recebidas e resgates realizados
+  reconhecimentos_recebidos ReconhecimentoMerito[]
+  resgates                  ResgateVantagem[]
+
+  @@map("alunos")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: EmpresaParceira
+// Vincula-se a Usuario (1:1). Representa empresas que oferecem vantagens.
+// ---------------------------------------------------------------------------
+model EmpresaParceira {
+  id_empresa    Int     @id @default(autoincrement())
+  razao_social  String
+  nome_fantasia String?
+  cnpj          String  @unique
+  contato_nome  String?
+
+  // Chave estrangeira para a tabela base de usuário
+  id_usuario Int     @unique
+  usuario    Usuario @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+
+  vantagens Vantagem[]
+  resgates  ResgateVantagem[]
+
+  @@map("empresas_parceiras")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: Professor
+// Vincula-se a Usuario (1:1). Possui saldo para distribuir aos alunos.
+// ---------------------------------------------------------------------------
+model Professor {
+  id_professor  Int     @id @default(autoincrement())
+  nome_completo String
+  cpf           String  @unique
+  departamento  String?
+
+  // Saldo de moedas disponível para distribuição
+  saldo_moedas Decimal @default(1000.00) @db.Decimal(10, 2)
+
+  // Chave estrangeira para a tabela base de usuário
+  id_usuario Int     @unique
+  usuario    Usuario @relation(fields: [id_usuario], references: [id_usuario], onDelete: Cascade)
+
+  // Relações com transações
+  reconhecimentos      ReconhecimentoMerito[]
+  distribuicoes_recebidas DistribuicaoSemestral[]
+
+  @@map("professores")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: ReconhecimentoMerito
+// Registra a transferência de moedas de um Professor para um Aluno.
+// É o coração do sistema — cada linha representa uma transação atômica.
+// ---------------------------------------------------------------------------
+model ReconhecimentoMerito {
+  id_reconhecimento Int      @id @default(autoincrement())
+  quantidade        Decimal  @db.Decimal(10, 2)
+  motivo            String
+  criado_em         DateTime @default(now())
+
+  // Chaves estrangeiras
+  id_professor Int
+  id_aluno     Int
+
+  professor Professor @relation(fields: [id_professor], references: [id_professor], onDelete: Restrict)
+  aluno     Aluno     @relation(fields: [id_aluno],     references: [id_aluno],     onDelete: Restrict)
+
+  @@map("reconhecimentos_merito")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: DistribuicaoSemestral
+// Registra o crédito de moedas que o sistema distribui ao Professor a cada
+// semestre (origem dos saldos dos professores).
+// ---------------------------------------------------------------------------
+model DistribuicaoSemestral {
+  id_distribuicao Int      @id @default(autoincrement())
+  quantidade      Decimal  @db.Decimal(10, 2)
+  semestre        String   // ex.: "2024.1"
+  criado_em       DateTime @default(now())
+
+  id_professor Int
+  professor    Professor @relation(fields: [id_professor], references: [id_professor], onDelete: Cascade)
+
+  @@map("distribuicoes_semestrais")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: Vantagem
+// Catálogo de produtos/serviços oferecidos pelas Empresas Parceiras.
+// ---------------------------------------------------------------------------
+model Vantagem {
+  id_vantagem  Int     @id @default(autoincrement())
+  nome         String
+  descricao    String
+  foto_url     String?
+  custo_moedas Decimal @db.Decimal(10, 2)
+  ativo        Boolean @default(true)
+  criado_em    DateTime @default(now())
+
+  id_empresa Int
+  empresa    EmpresaParceira @relation(fields: [id_empresa], references: [id_empresa], onDelete: Cascade)
+
+  resgates ResgateVantagem[]
+
+  @@map("vantagens")
+}
+
+// ---------------------------------------------------------------------------
+// MODEL: ResgateVantagem
+// Registra o uso de moedas por um Aluno para resgatar uma vantagem oferecida
+// por uma Empresa Parceira.
+// ---------------------------------------------------------------------------
+model ResgateVantagem {
+  id_resgate   Int           @id @default(autoincrement())
+  codigo_cupom String        @unique
+  quantidade   Decimal       @db.Decimal(10, 2)
+  descricao    String
+  status       StatusResgate @default(PENDENTE)
+  criado_em    DateTime      @default(now())
+
+  id_aluno    Int
+  id_vantagem Int
+  id_empresa  Int
+
+  aluno    Aluno           @relation(fields: [id_aluno],    references: [id_aluno],    onDelete: Restrict)
+  vantagem Vantagem        @relation(fields: [id_vantagem], references: [id_vantagem], onDelete: Restrict)
+  empresa  EmpresaParceira @relation(fields: [id_empresa],  references: [id_empresa],  onDelete: Restrict)
+
+  @@map("resgates_vantagem")
+}
