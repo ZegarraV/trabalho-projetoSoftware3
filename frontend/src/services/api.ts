@@ -10,9 +10,10 @@ import { AUTH_STORAGE_KEY } from '../constants/auth';
 import type { TipoPerfil } from '../contexts/AuthContext';
 
 // Instância do Axios com a URL base da API.
-// Em desenvolvimento, o proxy do Vite redireciona /api → http://localhost:3333
+// Em produção, usa a variável de ambiente VITE_API_URL (ex: https://api-projeto-software.onrender.com)
+// Em desenvolvimento, usa o proxy do Vite que redireciona /api → http://localhost:3333
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: import.meta.env.VITE_API_URL || '/api',
   headers: {
     'Content-Type': 'application/json',
   },
